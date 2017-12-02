@@ -1,9 +1,8 @@
 import time
-from options.train_options import TrainOptions
-from data.data_loader import CreateDataLoader
-from models.models import create_model
-from utilSet.visualizer import Visualizer
-from LossFigure import draw_loss_figure
+from .options.train_options import TrainOptions
+from .data.data_loader import CreateDataLoader
+from .models.models import create_model
+from .utilSet.visualizer import Visualizer
 
 opt = TrainOptions().parse()
 data_loader = CreateDataLoader(opt)
@@ -35,10 +34,7 @@ if __name__ == '__main__':
             errors = model.get_current_errors()
             t = (time.time() - iter_start_time) / opt.batchSize
             visualizer.print_current_errors(epoch, epoch_iter, errors, t)
-            # epoch 训练轮数  iters 训练图片数量，
-
-            if total_steps % dataset_size == 0:
-                draw_loss_figure(total_steps/dataset_size)##以训练轮数命名
+            # epoch 训练轮数  iters 训练图片数量
 
             if total_steps % 5000 == 0:
                 #每5000张图片保存一次，此处共2200张图片，故每两轮多600张时会保存一次
