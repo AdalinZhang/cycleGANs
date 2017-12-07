@@ -9,7 +9,7 @@ import torch
 from torch.autograd import Variable
 
 
-class ImagePool():#
+class ImagePool:  #
     def __init__(self, pool_size):
         self.pool_size = pool_size
         if self.pool_size > 0:
@@ -50,13 +50,13 @@ class CycleGANModel(BaseModel):
         self.input_B = self.Tensor(1, 3, 256, 256)
 
         # Code (paper): G_A (G), G_B (F), D_A (D_Y), D_B (D_X)
-        self.netG_A = networks.define_G(3, 3,64, opt.norm, not opt.no_dropout, opt.init_type, self.gpu_ids)
-        self.netG_B = networks.define_G(3, 3,64, opt.norm, not opt.no_dropout, opt.init_type, self.gpu_ids)
+        self.netG_A = networks.define_G(3, 3, 64, opt.norm, not opt.no_dropout, opt.init_type, self.gpu_ids)
+        self.netG_B = networks.define_G(3, 3, 64, opt.norm, not opt.no_dropout, opt.init_type, self.gpu_ids)
 
         if self.isTrain:
             use_sigmoid = opt.no_lsgan
-            self.netD_A = networks.define_D(3, 64, 3, opt.norm, use_sigmoid, opt.init_type, self.gpu_ids)
-            self.netD_B = networks.define_D(3, 64, 3, opt.norm, use_sigmoid, opt.init_type, self.gpu_ids)
+            self.netD_A = networks.define_D(3, 64, opt.norm, use_sigmoid, opt.init_type, self.gpu_ids)
+            self.netD_B = networks.define_D(3, 64, opt.norm, use_sigmoid, opt.init_type, self.gpu_ids)
         if not self.isTrain or opt.continue_train:
             which_epoch = opt.which_epoch
             self.load_network(self.netG_A, 'G_A', which_epoch)
@@ -67,14 +67,15 @@ class CycleGANModel(BaseModel):
 
         if self.isTrain:
             self.old_lr = 0.0002
-            self.fake_A_pool = ImagePool(0)#改ImagePool(50)
-            self.fake_B_pool = ImagePool(0)#改ImagePool(50)
+            self.fake_A_pool = ImagePool(0)  # 改ImagePool(50)
+            self.fake_B_pool = ImagePool(0)  # 改ImagePool(50)
             # define loss functions
             self.criterionGAN = networks.GANLoss()
             self.criterionCycle = torch.nn.L1Loss()
             self.criterionIdt = torch.nn.L1Loss()
             # initialize optimizers
-            self.optimizer_G = torch.optim.Adam(itertools.chain(self.netG_A.parameters(), self.netG_B.parameters()), lr=0.0002, betas=(0.5, 0.999))
+            self.optimizer_G = torch.optim.Adam(itertools.chain(self.netG_A.parameters(), self.netG_B.parameters()),
+                                                lr=0.0002, betas=(0.5, 0.999))
             self.optimizer_D_A = torch.optim.Adam(self.netD_A.parameters(), lr=0.0002, betas=(0.5, 0.999))
             self.optimizer_D_B = torch.optim.Adam(self.netD_B.parameters(), lr=0.0002, betas=(0.5, 0.999))
             self.optimizers = []
@@ -85,12 +86,12 @@ class CycleGANModel(BaseModel):
             for optimizer in self.optimizers:
                 self.schedulers.append(networks.get_scheduler(optimizer, opt))
 
-    def set_input(self, input):
-        input_A = input['A']
-        input_B = input['B']
+    def set_input(self, input_):
+        input_A = input_['A']
+        input_B = input_['B']
         self.input_A.resize_(input_A.size()).copy_(input_A)
         self.input_B.resize_(input_B.size()).copy_(input_B)
-        self.image_paths = input['A_paths']#用于给输出图片获得原始文件名标签，
+        self.image_paths = input_['A_paths']  # 用于给输出图片获得原始文件名标签，
 
     def forward(self):
         self.real_A = Variable(self.input_A)
@@ -143,9 +144,11 @@ class CycleGANModel(BaseModel):
             # G_A should be identity if real_B is fed.
             idt_A = self.netG_A(self.real_B)
             loss_idt_A = self.criterionIdt(idt_A, self.real_B) * lambda_B * lambda_idt
+            # real_B -> G_A -> idt_A  <--> real_B
             # G_B should be identity if real_A is fed.
             idt_B = self.netG_B(self.real_A)
             loss_idt_B = self.criterionIdt(idt_B, self.real_A) * lambda_A * lambda_idt
+            # real_A -> G_B -> idt_B  <--> real_A
 
             self.idt_A = idt_A.data
             self.idt_B = idt_B.data
@@ -160,22 +163,31 @@ class CycleGANModel(BaseModel):
         # GAN loss D_A(G_A(A))
         fake_B = self.netG_A(self.real_A)
         pred_fake = self.netD_A(fake_B)
-        loss_G_A = self.criterionGAN(pred_fake, True)
+        loss_G_A = self.criterionGAN(pred_fake, True)  # real_A -> G_A -> fake_B -> D_A  <--> 1.0
 
         # GAN loss D_B(G_B(B))
         fake_A = self.netG_B(self.real_B)
         pred_fake = self.netD_B(fake_A)
-        loss_G_B = self.criterionGAN(pred_fake, True)
+        loss_G_B = self.criterionGAN(pred_fake, True)  # real_B -> G_B -> fake_A -> D_B  <--> 1.0
 
         # Forward cycle loss
         rec_A = self.netG_B(fake_B)
         loss_cycle_A = self.criterionCycle(rec_A, self.real_A) * lambda_A
-
+        # real_A -> G_A -> fake_B -> G_B -> rec_A  <-->  real_A
         # Backward cycle loss
         rec_B = self.netG_A(fake_A)
         loss_cycle_B = self.criterionCycle(rec_B, self.real_B) * lambda_B
+        # real_B -> G_B -> fake_A -> G_A -> rec_B  <-->  real_B
+
+        # Fake_B_lr_loss：loss between fake_B_grid and real_B_grid
+        step_size = 10  # 用于提取网格的步长
+        k = 10          # 权重系数 10^{-2, -1, 0, 1, 2} * step_size**2
+        fake_B_grid = fake_B[:, :, 0:255:step_size, 0:255:step_size]   # fake_B：1 x 3 x 256 x 256
+        real_B_grid = self.real_B[:, :, 0:255:step_size, 0:255:step_size]
+        Fake_B_lr_loss = torch.nn.MSELoss()(fake_B_grid, real_B_grid) * k
+
         # combined loss
-        loss_G = loss_G_A + loss_G_B + loss_cycle_A + loss_cycle_B + loss_idt_A + loss_idt_B
+        loss_G = loss_G_A + loss_G_B + loss_cycle_A + loss_cycle_B + loss_idt_A + loss_idt_B + Fake_B_lr_loss
         loss_G.backward()
 
         self.fake_B = fake_B.data
@@ -187,6 +199,7 @@ class CycleGANModel(BaseModel):
         self.loss_G_B = loss_G_B.data[0]
         self.loss_cycle_A = loss_cycle_A.data[0]
         self.loss_cycle_B = loss_cycle_B.data[0]
+        self.Fake_B_lr_loss = Fake_B_lr_loss.data[0]
 
     def optimize_parameters(self):
         # forward
@@ -206,7 +219,8 @@ class CycleGANModel(BaseModel):
 
     def get_current_errors(self):
         ret_errors = OrderedDict([('D_A', self.loss_D_A), ('G_A', self.loss_G_A), ('Cyc_A', self.loss_cycle_A),
-                                 ('D_B', self.loss_D_B), ('G_B', self.loss_G_B), ('Cyc_B',  self.loss_cycle_B)])
+                                 ('D_B', self.loss_D_B), ('G_B', self.loss_G_B), ('Cyc_B',  self.loss_cycle_B),
+                                 ('Fake_B_lr_loss', self.Fake_B_lr_loss)])
         if self.opt.identity > 0.0:
             ret_errors['idt_A'] = self.loss_idt_A
             ret_errors['idt_B'] = self.loss_idt_B
